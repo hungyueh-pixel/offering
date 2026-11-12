@@ -25,11 +25,14 @@
 }
 html{background:var(--bg)}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.6;
-  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 48px;
+  padding-block:0 48px;
   -webkit-text-size-adjust:100%}
 /* 錢袋特效畫布比錢袋大，左右超出畫面的部分裁掉，避免出現橫向捲軸 */
 html,body{overflow-x:hidden}
 @supports (overflow:clip){html,body{overflow-x:clip}}
+/* iPhone Safari 不理會 html/body 上的 overflow，所以改在滿版寬的 #app 裁切，左右留白也放在 #app */
+#app{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));overflow-x:hidden}
+@supports (overflow:clip){#app{overflow-x:clip}}
 html.lock,html.lock body{overflow:hidden}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .wrap{max-width:1000px;margin:0 auto}
@@ -583,7 +586,7 @@ function audio() {
   if (muted) return null;
   try {
     if (!AC) { var C = window.AudioContext || window.webkitAudioContext; if (!C) return null; AC = new C(); }
-    if (AC.state === 'suspended') AC.resume();
+    if (AC.state !== 'running') { var p = AC.resume(); if (p && p.catch) p.catch(function () { }); }
     return AC;
   } catch (e) { return null; }
 }
@@ -1514,7 +1517,26 @@ document.addEventListener('keydown', function (e) {
     else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { f[0].focus(); e.preventDefault(); }
   }
 });
-document.addEventListener('pointerdown', function () { if (!muted) audio(); }, { once: true, capture: true });
+/* 手機規定「手指離開螢幕」那一刻才算真的點擊，才准網頁出聲，所以在這些時機解鎖聲音。
+   iPhone 靜音鍵開著也要有音效：聲音類型設成「播放」（像看影片）；舊版 iOS 沒有這個設定，就在第一次點擊時播一段無聲的 <audio>。 */
+var hasAudioSession = false, silentDone = false;
+try { if (navigator.audioSession) { navigator.audioSession.type = 'playback'; hasAudioSession = true; } } catch (e) { }
+function unlockAudio() {
+  if (muted) return;
+  var a = audio(); if (!a) return;
+  if (!hasAudioSession && !silentDone) {
+    silentDone = true;
+    try {
+      var el = document.createElement('audio');
+      el.setAttribute('x-webkit-airplay', 'deny'); el.preload = 'auto';
+      el.src = 'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+      var p = el.play(); if (p && p.catch) p.catch(function () { silentDone = false; });
+    } catch (e) { silentDone = false; }
+  }
+  if (a.state === 'running') return;
+  try { var s = a.createBufferSource(); s.buffer = a.createBuffer(1, 1, 22050); s.connect(a.destination); s.start(0); } catch (e) { }
+}
+['touchend', 'pointerup', 'click', 'keydown'].forEach(function (t) { document.addEventListener(t, unlockAudio, true); });
 
 loadData();
 /* 網頁放著很久再回來看時，自動抓一次最新記錄 */
